@@ -148,7 +148,7 @@ class nnUNetTrainer(object):
         self.probabilistic_oversampling = False
         self.num_iterations_per_epoch = 250
         self.num_val_iterations_per_epoch = 50
-        self.num_epochs = 1000
+        self.num_epochs = 150
         self.current_epoch = 0
         self.enable_deep_supervision = True
 
@@ -638,7 +638,8 @@ class nnUNetTrainer(object):
             initial_patch_size,
             mirror_axes,
         ) = self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
-
+        mirror_axes = (1,)
+        print("miror_axes",mirror_axes)
         # training pipeline
         tr_transforms = self.get_training_transforms(
             patch_size, rotation_for_DA, deep_supervision_scales, mirror_axes, do_dummy_2d_data_aug,

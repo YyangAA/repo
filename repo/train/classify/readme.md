@@ -1,0 +1,2 @@
+这里分类代码我略微修改，让其适配nii.gz格式的输入
+其中data_process_XX的三个代码是特征提取的代码，要先跑这三个特征提取的代码，再跑lasso回归特征选择的代码，最后跑/mnt/sda/yx/knee/nnUNet/repo/train/classify/SVM_RBF_save_model.py保存结果和模型
