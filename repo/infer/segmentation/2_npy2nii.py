@@ -6,7 +6,7 @@ from pathlib import Path
 # ================= 配置路径 =================
 
 # 1. 你的原始推理数据（只有图像）所在的路径
-source_images_dir = "/mnt/sda/yx/knee/5t/npy_from_dicom_2/imagesTr"
+source_images_dir = "./data/npy/imagesTr"
 
 # 2. nnU-Net 目标路径
 # 假设任务ID是 600，任务名是 Knee2D
@@ -15,7 +15,7 @@ nnUNet_raw = os.environ.get('nnUNet_raw')
 if nnUNet_raw is None:
     nnUNet_raw = "/mnt/sda/yx/knee/nnUNet/nnUnet_raw/" 
 
-task_name = "Dataset1000208_Knee2D"
+task_name = "Dataset9999_Knee2D"
 target_base = os.path.join(nnUNet_raw, task_name)
 
 # 输出目录改为 imagesTs (用于存放待推理的测试集)

@@ -82,11 +82,11 @@ def stack_slices_to_nii(input_folder, output_folder):
 # ---------------------------------------------------------
 
 # 处理图像 (带 _0000 的)
-image_in = "/mnt/sda/yx/knee/nnUNet/nnUNet_raw/Dataset1000208_Knee2D/imagesTr"
-image_out = "/mnt/sda/yx/knee/5t/data_unzipped/第二批/image_3d"
+image_in = "/mnt/sda/yx/knee/nnUNet/nnUNet_raw/Dataset9999_Knee2D/imagesTr"
+image_out = "./data/image_3d"
 stack_slices_to_nii(image_in, image_out)
 
 # 处理掩码 (不带 _0000 的)
-mask_in = "/mnt/sda/yx/knee/5t/data_unzipped/第二批/inference_output"
-mask_out = "/mnt/sda/yx/knee/5t/data_unzipped/第二批/mask_3d"
+mask_in = "./data/inference_output"
+mask_out = "./data/mask_3d"
 stack_slices_to_nii(mask_in, mask_out)

@@ -78,9 +78,9 @@ def convert_dcm_to_2d_slices(source_dir, output_dir):
 
 if __name__ == "__main__":
 
-    SOURCE_PATH = r"/mnt/sda/yx/knee/5t/data_unzipped/第二批/第二批5T" 
+    SOURCE_PATH = r"./data/dcm" 
     
-    OUTPUT_PATH = r"/mnt/sda/yx/knee/5t/npy_from_dicom_2"
+    OUTPUT_PATH = r"./data/npy"
     
     # ===========================================
     convert_dcm_to_2d_slices(SOURCE_PATH, OUTPUT_PATH)

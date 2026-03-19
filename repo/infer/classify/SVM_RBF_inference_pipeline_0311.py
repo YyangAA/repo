@@ -328,7 +328,7 @@ def main():
         
         image_path = os.path.join(args.image_folder, filename)
         mask_path = os.path.join(args.mask_folder, file_prefix + ".nii.gz")
-        
+        # print(mask_path,filename,image_path)
         if not os.path.exists(mask_path):
             print(f"Warning: Mask not found for {file_prefix}")
             continue

@@ -8,15 +8,15 @@ from tqdm import tqdm  # 如果没有安装tqdm，可以去掉这个库以及下
 
 # 1. 原始图像文件夹 (输入给 nnUNet 的 imagesTs 或 imagesTr)
 # 注意：这里必须包含 _0000.nii.gz 的原始文件
-raw_image_dir = "/mnt/sda/yx/knee/nnUNet/nnUNet_raw/Dataset1000208_Knee2D/imagesTr"
+raw_image_dir = "/mnt/sda/yx/knee/nnUNet/nnUNet_raw/Dataset9999_Knee2D/imagesTr"
 
 # 2. 推理结果文件夹 (nnUNetv2_predict 的 -o 输出目录)
-predict_dir = "/mnt/sda/yx/knee/inference_output"
+predict_dir = "./data/inference_output"
 # predict_dir = "/mnt/sda/yx/knee/nnUNet/inference_output"
-predict_dir = "/mnt/sda/yx/knee/5t/data_unzipped/第二批/inference_output"
+# predict_dir = "/mnt/sda/yx/knee/5t/data_unzipped/第二批/inference_output"
 
 # 3. 可视化结果保存路径 (会自动创建文件夹)
-vis_output_dir = "./vis_results_old"
+vis_output_dir = "./data/vis_results_old"
 
 # 4. 设置 Case ID
 #   - 如果想看单张：写具体名字，如 case_id = "常会儒_0"
