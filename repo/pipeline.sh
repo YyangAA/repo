@@ -16,4 +16,4 @@ nnUNetv2_predict -i /mnt/sda/yx/knee/nnUNet/nnUNet_raw/Dataset9999_Knee2D/images
 
 python ./infer/segmentation/5__nii23D.py
 # 分类推理
-python ./infer/classify/SVM_RBF_inference_pipeline_0311.py     --image_folder "./data/image_3d"     --mask_folder "./data/mask_3d"     --model_dir "./ckpt"     --output "./data/inference_results.csv"
+python ./infer/classify/SVM_RBF_inference_pipeline_0311.py     --image_folder "./data/image_3d"     --mask_folder "./data/mask_3d"     --model_dir "./checkpoint/results"     --output "./data/inference_results.csv"
