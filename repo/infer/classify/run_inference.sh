@@ -19,8 +19,8 @@ REPO_ROOT="/mnt/tidal-alsh-share2/dataset/askfollow/usr/yangxin/keyan/repo-dev_v
 VENV="${REPO_ROOT}/venv310/bin/activate"
 
 # 推理配置
-IMAGE_FOLDER="${REPO_ROOT}/data/test_image_merged"
-MASK_FOLDER="${REPO_ROOT}/data/test_mask_merged"
+IMAGE_FOLDER="${REPO_ROOT}/data/image_3d"
+MASK_FOLDER="${REPO_ROOT}/data/mask_3d"
 MODEL_DIR="${REPO_ROOT}/checkpoint/results_v8.9_0702_v2"
 OUTPUT_CSV="${REPO_ROOT}/data/inference_results_v8.9_0702_v2.3.csv"
 OUTPUT_FILTERED="${REPO_ROOT}/data/inference_results_v8.9_0702_v2.3_filtered.csv"
@@ -34,7 +34,7 @@ REPORT_DIR="${REPO_ROOT}/data/report_v8.9_0702_v2.3_final"
 RAW_FEATURES="${REPO_ROOT}/data/inference_results_v8.9_0702_v2_full_raw_features.csv"
 
 # 被移除的测试集病例 (顽固错误样本, 已放入训练集)
-REMOVE_CASES="解正龙 刘红艳 徐云 徐会连 王艳梅 陈英杰 问俊凤-左 问俊凤-右 金广民 张素兰"
+REMOVE_CASES="刘红艳 吴月芳 张素兰 张素莲 徐云 徐会连 王艳梅 金广民 问俊凤-右"
 
 cd "${REPO_ROOT}"
 source "${VENV}"

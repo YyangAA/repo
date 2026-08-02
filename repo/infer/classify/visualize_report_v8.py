@@ -154,15 +154,28 @@ def load_ground_truth(excel_path):
     df = pd.read_excel(excel_path)
     df["name"] = df["患者姓名"].astype(str).str.replace("_knee", "", regex=False).str.strip()
 
+    # 膝关节列 -> 后缀（左/右），用于区分同名患者的左右膝
+    knee_suffix = {"左": "-左", "右": "-右"}
+    has_knee = "膝关节" in df.columns
+
     grade_dict = {}
     for _, row in df.iterrows():
-        cid = row["name"]
-        grade_dict[cid] = {}
+        name = row["name"]
+        vals = {}
         for col_ch, col_en in region_columns.items():
             if col_ch in df.columns:
-                grade_dict[cid][col_en] = int(row[col_ch]) if pd.notna(row[col_ch]) else -1
+                vals[col_en] = int(row[col_ch]) if pd.notna(row[col_ch]) else -1
             else:
-                grade_dict[cid][col_en] = -1
+                vals[col_en] = -1
+        # 同时写入“姓名”与“姓名-膝”两种 key，避免左右膝互相覆盖
+        if has_knee:
+            k = str(row["膝关节"]).strip()
+            suf = knee_suffix.get(k, "")
+            if suf:
+                grade_dict[f"{name}{suf}"] = vals
+        # 纯姓名 key：仅在尚未存在时写入（保留向后兼容，不覆盖已有的带膝 key）
+        if name not in grade_dict:
+            grade_dict[name] = vals
     return grade_dict
 
 
@@ -430,11 +443,11 @@ def add_report_legend(fig):
 def _fuzzy_find_gt(case_id, gt_dict, gt_key_map):
     """模糊匹配 gt_dict 的 key"""
     lookup_keys = [
-        case_id,
-        case_id.split('_')[0],
+        case_id,                        # 优先精确命中 "姓名-膝"（如 "张林侠-左"）
         case_id.replace("_knee", ""),
-        case_id.split('-')[0],          # 支持 "张林侠-左" -> "张林侠"
-        case_id.split('-')[0].split('_')[0],  # 多级分割
+        case_id.split('_')[0],
+        case_id.split('-')[0],          # 回退：去膝后缀 "张林侠-左" -> "张林侠"
+        case_id.split('-')[0].split('_')[0],
     ]
     for lk in lookup_keys:
         if lk in gt_key_map:
@@ -457,6 +470,7 @@ def compute_metrics_per_region(pred_dict, gt_dict):
     for k in gt_dict:
         gt_key_map[k] = k
         gt_key_map[k.replace("_knee", "").strip()] = k
+        gt_key_map[str(k).strip()] = k
 
     region_results = {}
 
