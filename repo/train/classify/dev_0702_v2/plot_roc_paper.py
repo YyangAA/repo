@@ -230,6 +230,67 @@ def compute_curves_from_oof(region):
     }
 
 
+def compute_stage2_curves_per_region_oof(region, n_splits=5):
+    """
+    Stage 2 分区域 G1 vs G2 的 GroupKFold OOF 曲线（与 in_domain_stage2_auc.py 一致）。
+    只在真实损伤样本(grade>0)上做 G1 vs G2，聚合 OOF 概率算一条 ROC/PR。
+    AUC 与集内测试表 1 的 Stage2 AUC 严格一致。样本不足时返回 None。
+    """
+    import os as _os
+    csv_path = _os.path.join(FEATURE_DIR, f"{region}_stage2_filtered_features.csv")
+    if not _os.path.exists(csv_path):
+        csv_path = _os.path.join(FEATURE_DIR, "pooled_stage2_FL_TL_filtered_features.csv")
+        if not _os.path.exists(csv_path):
+            return None
+    df = pd.read_csv(csv_path)
+    if "region" in df.columns:
+        df = df[df["region"] == region]
+    keys = [k for k in ["case_id", "region", "grade"] if k in df.columns]
+    df = df.groupby(keys).mean().reset_index()
+    df = df[df["grade"] > 0].copy()
+    if len(df) < 4:
+        return None
+    drop = [c for c in ["case_id", "region", "grade", "cartilage_missing"] if c in df.columns]
+    X = df.drop(columns=drop).fillna(0)
+    y = (df["grade"] == 2).astype(int).values
+    groups = df["case_id"].values
+    nm = min((y == 0).sum(), (y == 1).sum())
+    if nm < 2:
+        return None
+    ns = min(n_splits, nm, len(np.unique(groups)))
+    if ns < 2:
+        return None
+    oof = np.full(len(y), np.nan)
+    for tr, te in GroupKFold(n_splits=ns).split(X, y, groups=groups):
+        if len(np.unique(y[tr])) < 2:
+            continue
+        sc = StandardScaler()
+        Xtr = sc.fit_transform(X.iloc[tr]); Xte = sc.transform(X.iloc[te])
+        m = SVC(kernel="rbf", C=1, gamma="scale", probability=True,
+                class_weight="balanced", random_state=42)
+        m.fit(Xtr, y[tr]); oof[te] = m.predict_proba(Xte)[:, 1]
+    mask = ~np.isnan(oof)
+    if mask.sum() < 2 or len(np.unique(y[mask])) < 2:
+        return None
+    yt = y[mask]; ys = oof[mask]
+    mean_fpr = np.linspace(0, 1, 100); mean_recall = np.linspace(0, 1, 100)
+    fpr, tpr, _ = roc_curve(yt, ys); roc_auc = auc(fpr, tpr)
+    interp_tpr = np.interp(mean_fpr, fpr, tpr); interp_tpr[0] = 0.0; interp_tpr[-1] = 1.0
+    prec, rec, _ = precision_recall_curve(yt, ys); ap = average_precision_score(yt, ys)
+    order = np.argsort(rec); interp_prec = np.interp(mean_recall, rec[order], prec[order])
+    j = tpr - fpr; bi = int(np.argmax(j))
+    return {
+        "mean_fpr": mean_fpr, "mean_tpr": interp_tpr, "std_tpr": np.zeros_like(mean_fpr),
+        "mean_recall": mean_recall, "mean_prec": interp_prec, "std_prec": np.zeros_like(mean_recall),
+        "mean_roc_auc": roc_auc, "std_roc_auc": 0.0, "mean_pr_auc": ap, "std_pr_auc": 0.0,
+        "tprs_interp": [interp_tpr], "precs_interp": [interp_prec],
+        "fold_curves": [{"fpr": fpr, "tpr": tpr, "roc_auc": roc_auc, "prec": prec, "rec": rec, "ap": ap}],
+        "best_thresh": 0.5, "best_fpr": fpr[bi], "best_tpr": tpr[bi],
+        "best_threshold": (0.5, fpr[bi], tpr[bi]),
+        "n_pos": int(yt.sum()), "n_neg": int((1 - yt).sum()),
+    }
+
+
 def compute_cv_curves(X, y, groups, C, gamma, class_weight=None, n_splits=5):
     """
     5-Fold GroupKFold CV，返回每折和平均的 ROC / PR 数据
@@ -244,6 +305,7 @@ def compute_cv_curves(X, y, groups, C, gamma, class_weight=None, n_splits=5):
     auc_pr_list = []
     fold_curves = []   # 保存每折原始曲线
     threshold_list = []
+    acc_l=[]; sens_l=[]; spec_l=[]; prec_l=[]; f1_l=[]  # 每折分类指标(Youden阈值)
 
     for fold_idx, (train_ix, test_ix) in enumerate(cv.split(X, y, groups=groups)):
         X_train, X_test = X.iloc[train_ix], X.iloc[test_ix]
@@ -274,6 +336,14 @@ def compute_cv_curves(X, y, groups, C, gamma, class_weight=None, n_splits=5):
         best_fpr = fpr[best_idx]
         best_tpr = tpr[best_idx]
         threshold_list.append((best_thresh, best_fpr, best_tpr))
+
+        # --- 每折分类指标 (Youden 阈值) ---
+        from sklearn.metrics import accuracy_score as _acc, recall_score as _rec, precision_score as _prec, f1_score as _f1, confusion_matrix as _cm
+        _yp=(y_prob>=best_thresh).astype(int)
+        _c=_cm(y_test,_yp,labels=[0,1]); _tn,_fp,_fn,_tp=_c.ravel()
+        acc_l.append(_acc(y_test,_yp)); sens_l.append(_rec(y_test,_yp,zero_division=0))
+        spec_l.append(_tn/(_tn+_fp) if (_tn+_fp) else 0.0)
+        prec_l.append(_prec(y_test,_yp,zero_division=0)); f1_l.append(_f1(y_test,_yp,zero_division=0))
 
         # --- PR ---
         prec, rec, _ = precision_recall_curve(y_test, y_prob)
@@ -327,6 +397,11 @@ def compute_cv_curves(X, y, groups, C, gamma, class_weight=None, n_splits=5):
         "auc_roc_list": auc_roc_list,
         "auc_pr_list": auc_pr_list,
         "best_threshold": (avg_thresh_val, avg_thresh_fpr, avg_thresh_tpr),
+        "mean_acc": float(np.mean(acc_l)) if acc_l else float("nan"),
+        "mean_sens": float(np.mean(sens_l)) if sens_l else float("nan"),
+        "mean_spec": float(np.mean(spec_l)) if spec_l else float("nan"),
+        "mean_prec_metric": float(np.mean(prec_l)) if prec_l else float("nan"),
+        "mean_f1": float(np.mean(f1_l)) if f1_l else float("nan"),
     }
 
 
@@ -1402,6 +1477,23 @@ def main():
             # 汇总
             print_summary_table({"Pooled": pooled_data},
                                 title="Stage 2: Grade 1 vs Grade 2 (StratifiedKFold CV, Pooled)")
+
+            # === Stage2 分区四色 ROC（GroupKFold OOF，AUC 与表 1 一致）===
+            print(f"\n>>> [S2] Generating per-region Stage2 ROC (GroupKFold OOF, aligned with Table 1)...")
+            s2_region_data = {}
+            for _rg in REGIONS:
+                _d = compute_stage2_curves_per_region_oof(_rg)
+                if _d is not None:
+                    s2_region_data[_rg] = _d
+                    print(f"  [S2-OOF] {_rg}: AUC={_d['mean_roc_auc']:.3f} "
+                          f"(G1={_d['n_neg']}, G2={_d['n_pos']})")
+                else:
+                    print(f"  [S2-OOF] {_rg}: skipped (insufficient G1/G2 samples)")
+            if s2_region_data:
+                plot_combined_roc(s2_region_data,
+                                  os.path.join(OUTPUT_DIR, "S2_PerRegion_ROC.png"))
+                print_summary_table(s2_region_data,
+                                    title="Stage 2 per-region (GroupKFold OOF, aligned with Table 1)")
         else:
             print("  Stage2 CV failed — not enough classes.")
     else:
