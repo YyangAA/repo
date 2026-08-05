@@ -1051,11 +1051,6 @@ def plot_stage2_pooled_roc(pooled_data, save_path):
                 arrowprops=dict(arrowstyle="-|>", color="#777777", lw=1.0),
                 bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#cccccc", alpha=0.85))
 
-    # 样本量标注
-    ax.text(0.55, 0.15, f"n = {n_total}  (Grade 1: {n_total - n_pos}, Grade 2: {n_pos})",
-            transform=ax.transAxes, fontsize=9, color="#555555",
-            bbox=dict(boxstyle="round,pad=0.3", fc="#f8f8f8", ec="#dddddd", alpha=0.8))
-
     ax.set_xlim([-0.02, 1.02])
     ax.set_ylim([-0.02, 1.05])
     ax.set_xlabel("False Positive Rate (1 - Specificity)")
