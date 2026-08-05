@@ -1060,7 +1060,7 @@ def plot_stage2_pooled_roc(pooled_data, save_path):
     ax.set_ylim([-0.02, 1.05])
     ax.set_xlabel("False Positive Rate (1 - Specificity)")
     ax.set_ylabel("True Positive Rate (Sensitivity)")
-    ax.set_title("Stage-2 ROC: Grade 1 vs. Grade 2\n(Pooled All Regions, 5-Fold StratifiedKFold CV)",
+    ax.set_title("Stage-2 ROC: Grade 1 vs. Grade 2\n(Pooled all regions; mean of 5-fold ROC ±1 s.d.)",
                  fontweight="bold", pad=12, fontsize=12)
     ax.legend(loc="lower right", frameon=True)
     _add_watermark(ax)
@@ -1079,7 +1079,7 @@ def plot_stage2_combined_roc(pooled_data, per_region_data, region_info, save_pat
 
     # 对角参考线
     ax.plot([0, 1], [0, 1], ls="--", color="#bdc3c7", lw=1.5, alpha=0.7,
-            label="Chance level")
+            label="Chance level (AUC = 0.500)")
 
     # 池化 ROC (加粗虚线)
     d = pooled_data
@@ -1122,7 +1122,7 @@ def plot_stage2_combined_roc(pooled_data, per_region_data, region_info, save_pat
     ax.set_ylim([-0.02, 1.05])
     ax.set_xlabel("False Positive Rate (1 - Specificity)", fontsize=12)
     ax.set_ylabel("True Positive Rate (Sensitivity)", fontsize=12)
-    ax.set_title("Stage-2 ROC: Grade 1 vs. Grade 2 (LOGO-CV, Pooled)",
+    ax.set_title("Stage-2 ROC: Grade 1 vs. Grade 2\n(Curves = mean of 5-fold ROC; shaded band = ±1 s.d. of pooled)",
                  fontweight="bold", fontsize=13, pad=14)
     ax.legend(loc="lower right", frameon=True, fontsize=9)
     _add_watermark(ax)
@@ -1478,22 +1478,18 @@ def main():
             print_summary_table({"Pooled": pooled_data},
                                 title="Stage 2: Grade 1 vs Grade 2 (StratifiedKFold CV, Pooled)")
 
-            # === Stage2 分区四色 ROC（GroupKFold OOF，AUC 与表 1 一致）===
-            print(f"\n>>> [S2] Generating per-region Stage2 ROC (GroupKFold OOF, aligned with Table 1)...")
-            s2_region_data = {}
+            # === Stage2 分区 AUC 仅打印供参考（不单独出图）===
+            # 说明：为保证“表 2 与 Stage2 ROC 图口径一致”，Stage2 只保留池化 ROC 图
+            # (S2_Pooled_ROC.png)。分区 AUC (GroupKFold OOF) 仍打印以供核对，但不再生成
+            # S2_PerRegion_ROC.png（避免与池化口径混用，且 FL 因 G2 仅 2 例 AUC 不可靠）。
+            print(f"\n>>> [S2] Per-region AUC (GroupKFold OOF, reference only; no separate figure):")
             for _rg in REGIONS:
                 _d = compute_stage2_curves_per_region_oof(_rg)
                 if _d is not None:
-                    s2_region_data[_rg] = _d
                     print(f"  [S2-OOF] {_rg}: AUC={_d['mean_roc_auc']:.3f} "
                           f"(G1={_d['n_neg']}, G2={_d['n_pos']})")
                 else:
                     print(f"  [S2-OOF] {_rg}: skipped (insufficient G1/G2 samples)")
-            if s2_region_data:
-                plot_combined_roc(s2_region_data,
-                                  os.path.join(OUTPUT_DIR, "S2_PerRegion_ROC.png"))
-                print_summary_table(s2_region_data,
-                                    title="Stage 2 per-region (GroupKFold OOF, aligned with Table 1)")
         else:
             print("  Stage2 CV failed — not enough classes.")
     else:
