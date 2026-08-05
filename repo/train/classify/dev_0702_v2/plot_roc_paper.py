@@ -15,12 +15,25 @@ plot_roc_paper.py
     6. 各区域 ROC / PR 子图（标注样本量）
     7. Stage 2 综合面板
 
-数据来源: 从原始训练特征 CSV 重新跑 CV，使用 v8.7 保存的超参数
-输出目录: checkpoint/results_v8.7_paper_figures/  (不覆盖原有文件)
+模型/数据配置 (脚本顶部常量):
+  MODEL_DIR   = ./checkpoint/results_v8.9_0702_v2                 # 输入模型
+  FEATURE_DIR = ./train/classify/dev_0702_v2/data_train/feature  # Stage2/回退用特征
+  OOF_CSV     = ./data/in_domain_cv_results_v8.9_0702_v2/oof_predictions.csv  # Stage1 数据源
+  OUTPUT_DIR  = ./checkpoint/results_v8.9_0702_v2_paper_figures   # 输出目录
 
-使用方式:
-  cd repo-dev_v4/repo
-  python train/classify/dev_v8/plot_roc_paper.py
+Stage 1 数据来源说明:
+  Stage 1 直接读取 in_domain_cv_eval.py 产出的 OOF_CSV（oof_predictions.csv）,
+  按"聚合所有折 out-of-fold 预测"方式算 ROC/PR, 因此图中 AUC 与
+  集内测试表 1 (metrics_summary.csv) 严格一致。此模式下无折间方差,
+  故 SHOW_STD=False（不显示 ±std）。若 OOF_CSV 不存在, 则回退到从特征 CSV 重跑 CV。
+
+使用方式 (如何画出本图):
+  cd /mnt/tidal-alsh-share2/dataset/askfollow/usr/yangxin/keyan/repo-dev_v4/repo
+  # 1) 先确保集内测试 OOF 已生成 (若 oof_predictions.csv 已存在可跳过):
+  venv310/bin/python train/classify/dev_0702_v2/in_domain_cv_eval.py
+  # 2) 再画图 (Stage1 图 AUC 与表 1 一致):
+  venv310/bin/python train/classify/dev_0702_v2/plot_roc_paper.py
+  # 输出: checkpoint/results_v8.9_0702_v2_paper_figures/S1_Figure_Panel.png 等
 """
 
 import os
@@ -48,9 +61,10 @@ from sklearn.metrics import (
 # 全局配置
 # ============================================================
 # 路径
-FEATURE_DIR = "./train/classify/dev_v8/data_train/feature"
-MODEL_DIR = "./checkpoint/results_v8.7"
-OUTPUT_DIR = "./checkpoint/results_v8.7_paper_figures"
+FEATURE_DIR = "./train/classify/dev_0702_v2/data_train/feature"
+MODEL_DIR = "./checkpoint/results_v8.9_0702_v2"
+OUTPUT_DIR = "./checkpoint/results_v8.9_0702_v2_paper_figures"
+SHOW_STD = False  # Stage1 用聚合OOF, std=0, 不显示
 
 # 区域定义
 REGIONS = ["Femur_Medial", "Femur_Lateral", "Tibia_Medial", "Tibia_Lateral"]
@@ -159,6 +173,61 @@ def load_model_params(region):
     else:
         print(f"  Warning: model_params.pkl not found for {region}, using defaults")
         return 1, "scale", None
+
+
+OOF_CSV = "./data/in_domain_cv_results_v8.9_0702_v2/oof_predictions.csv"
+
+
+def compute_curves_from_oof(region):
+    """
+    从 in_domain_cv_eval.py 生成的 oof_predictions.csv 读取该区域的
+    OOF 预测概率，按“聚合所有折”方式算一条 ROC/PR，
+    使图的 AUC 与集内测试表 1 (metrics_summary.csv) 严格一致。
+    返回结构与 compute_cv_curves 兼容。
+    """
+    import pandas as pd
+    df = pd.read_csv(OOF_CSV)
+    sub = df[df["region"] == region]
+    y = sub["true_binary"].values.astype(int)
+    prob = sub["oof_prob_damage"].values.astype(float)
+
+    mean_fpr = np.linspace(0, 1, 100)
+    mean_recall = np.linspace(0, 1, 100)
+
+    fpr, tpr, _ = roc_curve(y, prob)
+    roc_auc = auc(fpr, tpr)
+    interp_tpr = np.interp(mean_fpr, fpr, tpr); interp_tpr[0] = 0.0; interp_tpr[-1] = 1.0
+
+    prec, rec, _ = precision_recall_curve(y, prob)
+    ap = average_precision_score(y, prob)
+    order = np.argsort(rec)
+    interp_prec = np.interp(mean_recall, rec[order], prec[order])
+
+    # Youden's J 最佳阈值
+    youden = tpr - fpr
+    bi = int(np.argmax(youden))
+    from sklearn.metrics import roc_curve as _rc
+    fpr2, tpr2, thr2 = _rc(y, prob)
+    bthr = float(thr2[bi]) if bi < len(thr2) else 0.5
+    bfpr, btpr = float(fpr2[bi]), float(tpr2[bi])
+
+    fold_curves = [{
+        "fpr": fpr, "tpr": tpr, "roc_auc": roc_auc,
+        "prec": prec, "rec": rec, "ap": ap,
+        "best_thresh": bthr, "best_fpr": bfpr, "best_tpr": btpr,
+    }]
+
+    return {
+        "mean_fpr": mean_fpr, "mean_tpr": interp_tpr, "std_tpr": np.zeros_like(mean_fpr),
+        "mean_recall": mean_recall, "mean_prec": interp_prec, "std_prec": np.zeros_like(mean_recall),
+        "mean_roc_auc": roc_auc, "std_roc_auc": 0.0,
+        "mean_pr_auc": ap, "std_pr_auc": 0.0,
+        "tprs_interp": [interp_tpr], "precs_interp": [interp_prec],
+        "fold_curves": fold_curves,
+        "best_thresh": bthr, "best_fpr": bfpr, "best_tpr": btpr,
+        "best_threshold": (bthr, bfpr, btpr),
+        "n_pos": int(y.sum()), "n_neg": int((1 - y).sum()),
+    }
 
 
 def compute_cv_curves(X, y, groups, C, gamma, class_weight=None, n_splits=5):
@@ -299,7 +368,7 @@ def plot_single_roc(region, data, save_path):
     # 均值 ROC 主曲线
     ax.plot(data["mean_fpr"], data["mean_tpr"],
             color=color, lw=2.8, alpha=0.95,
-            label=f"Mean ROC (AUC = {data['mean_roc_auc']:.3f} ± {data['std_roc_auc']:.3f})",
+            label=f"Mean ROC (AUC = {data['mean_roc_auc']:.3f})",
             path_effects=[pe.Stroke(linewidth=4.0, foreground="white"), pe.Normal()])
 
     # 最佳阈值点标注
@@ -350,7 +419,7 @@ def plot_combined_roc(all_data, save_path):
         # 均值 ROC
         ax.plot(d["mean_fpr"], d["mean_tpr"],
                 color=color, lw=2.5, alpha=0.92,
-                label=f"{label_short} (AUC = {d['mean_roc_auc']:.3f} ± {d['std_roc_auc']:.3f})",
+                label=f"{label_short} (AUC = {d['mean_roc_auc']:.3f})",
                 path_effects=[pe.Stroke(linewidth=3.8, foreground="white"), pe.Normal()])
 
         # 最佳阈值点
@@ -395,7 +464,7 @@ def plot_single_pr(region, data, save_path):
     # 均值 PR 主曲线
     ax.plot(data["mean_recall"], data["mean_prec"],
             color=color, lw=2.8, alpha=0.95,
-            label=f"Mean PR (AP = {data['mean_pr_auc']:.3f} ± {data['std_pr_auc']:.3f})",
+            label=f"Mean PR (AP = {data['mean_pr_auc']:.3f})",
             path_effects=[pe.Stroke(linewidth=4.0, foreground="white"), pe.Normal()])
 
     # 基线 (prevalence)
@@ -436,7 +505,7 @@ def plot_combined_pr(all_data, save_path):
         # 均值 PR
         ax.plot(d["mean_recall"], d["mean_prec"],
                 color=color, lw=2.5, alpha=0.92,
-                label=f"{label_short} (AP = {d['mean_pr_auc']:.3f} ± {d['std_pr_auc']:.3f})",
+                label=f"{label_short} (AP = {d['mean_pr_auc']:.3f})",
                 path_effects=[pe.Stroke(linewidth=3.8, foreground="white"), pe.Normal()])
 
     ax.set_xlim([-0.02, 1.02])
@@ -475,7 +544,7 @@ def plot_figure_panel(all_data, save_path):
         lower = np.maximum(d["mean_tpr"] - d["std_tpr"], 0)
         ax_a.fill_between(d["mean_fpr"], lower, upper, color=cl, alpha=0.18)
         ax_a.plot(d["mean_fpr"], d["mean_tpr"], color=c, lw=2.2,
-                  label=f"{lbl} (AUC={d['mean_roc_auc']:.3f}±{d['std_roc_auc']:.3f})",
+                  label=f"{lbl} (AUC={d['mean_roc_auc']:.3f})",
                   path_effects=[pe.Stroke(linewidth=3.2, foreground="white"), pe.Normal()])
         bt_v, bt_f, bt_t = d["best_threshold"]
         ax_a.scatter([bt_f], [bt_t], s=45, color=c, edgecolors="white", lw=1.2, zorder=10)
@@ -495,7 +564,7 @@ def plot_figure_panel(all_data, save_path):
         lower = np.maximum(d["mean_prec"] - d["std_prec"], 0)
         ax_b.fill_between(d["mean_recall"], lower, upper, color=cl, alpha=0.18)
         ax_b.plot(d["mean_recall"], d["mean_prec"], color=c, lw=2.2,
-                  label=f"{lbl} (AP={d['mean_pr_auc']:.3f}±{d['std_pr_auc']:.3f})",
+                  label=f"{lbl} (AP={d['mean_pr_auc']:.3f})",
                   path_effects=[pe.Stroke(linewidth=3.2, foreground="white"), pe.Normal()])
     ax_b.set_xlim([-0.02, 1.02]); ax_b.set_ylim([-0.02, 1.05])
     ax_b.set_xlabel("Recall"); ax_b.set_ylabel("Precision")
@@ -527,7 +596,7 @@ def plot_figure_panel(all_data, save_path):
         ax.scatter([bt_f], [bt_t], s=35, color=c, edgecolors="white", lw=1.0, zorder=10)
 
         ax.set_xlim([-0.03, 1.03]); ax.set_ylim([-0.03, 1.06])
-        ax.set_title(f"{lbl}\nAUC={d['mean_roc_auc']:.3f}±{d['std_roc_auc']:.3f}",
+        ax.set_title(f"{lbl}\nAUC={d['mean_roc_auc']:.3f}",
                      fontsize=9, fontweight="bold", pad=4)
         ax.tick_params(labelsize=7.5)
         if i // 2 == 1:
@@ -1238,12 +1307,15 @@ def main():
     for region in REGIONS:
         print(f"\n>>> [S1] Processing: {region}")
 
-        X, y, groups = load_region_data(region)
-        C, gamma, cw = load_model_params(region)
-        print(f"  Data: {X.shape}, Pos: {y.sum()}, Neg: {(1-y).sum()}")
-        print(f"  Params: C={C}, gamma={gamma}, class_weight={cw}")
-
-        data = compute_cv_curves(X, y, groups, C, gamma, class_weight=cw)
+        if os.path.exists(OOF_CSV):
+            data = compute_curves_from_oof(region)
+            print(f"  [OOF] from {OOF_CSV}  Pos: {data['n_pos']}, Neg: {data['n_neg']}")
+        else:
+            X, y, groups = load_region_data(region)
+            C, gamma, cw = load_model_params(region)
+            print(f"  Data: {X.shape}, Pos: {y.sum()}, Neg: {(1-y).sum()}")
+            print(f"  Params: C={C}, gamma={gamma}, class_weight={cw}")
+            data = compute_cv_curves(X, y, groups, C, gamma, class_weight=cw)
         all_data_s1[region] = data
         print(f"  AUC-ROC: {data['mean_roc_auc']:.3f} ± {data['std_roc_auc']:.3f}")
         print(f"  AP:      {data['mean_pr_auc']:.3f} ± {data['std_pr_auc']:.3f}")
