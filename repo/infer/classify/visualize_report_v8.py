@@ -11,9 +11,9 @@ v8.4+ 综合可视化诊断报告 (v2.1 增强版)：生成包含 分割结果�
     python infer/classify/visualize_report_v8.py \
         --image_folder  "./data/image_3d" \
         --mask_folder   "./data/mask_3d" \
-        --pred_csv      "./data/inference_results_v8.csv" \
-        --output_dir    "./data/report_v8.4" \
-        --excel         "/path/to/ground_truth.xlsx"   (可选: 有真实标签时传入)
+        --pred_csv      "./data/inference_results_v8.9_0702_v2.3_filtered.csv" \
+        --output_dir    "./data/report_v8.9_0702_v2.3_final_bal" \
+        --excel         "./data/GT_merged_v2.3_test.xlsx"   (可选: 有真实标签时传入)
         --case_id       "张三"                         (可选: 不传则批量处理全部)
         --rotate_90                                    (可选: 顺时针旋转90度)
 
@@ -23,7 +23,7 @@ v8.4+ 综合可视化诊断报告 (v2.1 增强版)：生成包含 分割结果�
     - Row 1: 损伤概率热力图（绿=正常, 红=损伤）
     - Row 2: 诊断结果文本面板（预测 vs 真实标签对比表，含 Stage2 Otsu 阈值）
     当有真实标签时额外生成:
-    - summary_metrics.png: ROC 曲线 + 指标汇总表
+    - summary_metrics.png: ROC 曲线 + 指标汇总表(二分类 AUC/Acc/Sens/Spec/Prec/F1 + 三分类 3-Cls Acc)
     - confusion_matrices.png: 二分类 + 三分类混淆矩阵
     - summary_metrics.csv: 指标数据表
 """
@@ -650,11 +650,12 @@ def render_summary_report(region_results, output_dir):
     # ======= Row 1: 二分类指标表格 =======
     ax_tbl = fig.add_subplot(gs[1])
     ax_tbl.axis('off')
-    ax_tbl.set_title('Binary Classification Metrics  (Normal vs Damaged)',
+    ax_tbl.set_title('Classification Metrics  (Binary: Normal vs Damaged  |  3-Cls: G0/G1/G2)',
                      fontsize=13, fontweight='bold', pad=10)
 
     # 表头
     col_headers = ["Region", "AUC", "Acc", "Sens", "Spec", "Prec", "F1",
+                   "3-Cls Acc",
                    "n", "Pos", "Neg", "TP", "FP", "FN", "TN"]
     col_x = np.linspace(0.01, 0.97, len(col_headers))
 
@@ -676,11 +677,14 @@ def render_summary_report(region_results, output_dir):
             vals = [dn] + ["—"] * (len(col_headers) - 1)
         else:
             auc_str = f"{m['auc']:.3f}" if not np.isnan(m['auc']) else "N/A"
+            ga = m.get('grade_accuracy', float('nan'))
+            ga_str = f"{ga:.3f}" if (ga is not None and not (isinstance(ga, float) and np.isnan(ga))) else "N/A"
             vals = [
                 dn, auc_str,
                 f"{m['accuracy']:.3f}", f"{m['recall']:.3f}",
                 f"{m['specificity']:.3f}", f"{m['precision']:.3f}",
                 f"{m['f1']:.3f}",
+                ga_str,
                 str(m['n']), str(m['n_pos']), str(m['n_neg']),
                 str(m['tp']), str(m['fp']), str(m['fn']), str(m['tn']),
             ]
