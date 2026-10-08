@@ -1,147 +1,180 @@
-# Welcome to the new nnU-Net!
+# 5.0T 膝关节软骨损伤自动分级系统 (Knee Cartilage Damage Classification)
 
-Click [here](https://github.com/MIC-DKFZ/nnUNet/tree/nnunetv1) if you were looking for the old one instead.
+基于 **5.0T 膝关节 MRI** 的软骨损伤自动识别与分级系统。从原始 DICOM 一路完成
+**软骨自动分割 → 三维影像组学特征提取 → 级联 SVM 分类（二分类 + 分级）→ 损伤热力图可视化**，
+全流程无需人工干预。
 
-Coming from V1? Check out the [TLDR Migration Guide](documentation/tldr_migration_guide_from_v1.md). Reading the rest of the documentation is still strongly recommended ;-)
+> 本仓库基于 nnU-Net 框架扩展，分割部分使用 nnU-Net，分类/评估/可视化部分位于 `repo/` 目录，
+> 均为本项目自研代码。
 
-## **2025-10-23 There seems to be a [severe performance regression with torch 2.9.0 and 3D convs](https://github.com/pytorch/pytorch/issues/166122) (when using AMP). Please use torch 2.8.0 or lower with nnU-Net!**
+---
 
+## 1. 流程总览 (Pipeline)
 
-## **2024-04-18 UPDATE: New residual encoder UNet presets available!**
-Residual encoder UNet presets substantially improve segmentation performance.
-They ship for a variety of GPU memory targets. It's all awesome stuff, promised! 
-Read more :point_right: [here](documentation/resenc_presets.md) :point_left:
+```
+原始 DICOM
+   │
+   ▼
+[Stage 1] 软骨自动分割 (nnU-Net, 2D)  +  3D 重构
+   │            → image_3d / mask_3d (nii.gz, 逐例)
+   ▼
+[Stage 2] 三维影像组学特征提取 (PyRadiomics)  +  跨区域特征增强
+   │            → radiomics features (original + wavelet + cross/ratio/one-hot)
+   ▼
+[Stage 3] 级联 SVM 分类
+   │      Stage 1: 正常 (G0) vs 损伤 (G1/G2)  —— 4 区域独立 SVM-RBF
+   │      Stage 2: 轻度 (G1) vs 严重 (G2)     —— 池化分级 SVM
+   ▼
+[Stage 4] 可视化诊断报告
+             → 每例: 分割叠加图 + 损伤概率热力图 + 诊断面板
+             → 汇总: ROC/混淆矩阵/指标表（二分类 + 三分类）
+```
 
-Also check out our [new paper](https://arxiv.org/pdf/2404.09556.pdf) on systematically benchmarking recent developments in medical image segmentation. You might be surprised!
+四个软骨亚区：股骨内侧 (FM/MFC)、股骨外侧 (FL/LFC)、胫骨内侧 (TM/MTP)、胫骨外侧 (TL/LTP)。
 
-# What is nnU-Net?
-Image datasets are enormously diverse: image dimensionality (2D, 3D), modalities/input channels (RGB image, CT, MRI, microscopy, ...), 
-image sizes, voxel sizes, class ratio, target structure properties and more change substantially between datasets. 
-Traditionally, given a new problem, a tailored solution needs to be manually designed and optimized  - a process that 
-is prone to errors, not scalable and where success is overwhelmingly determined by the skill of the experimenter. Even 
-for experts, this process is anything but simple: there are not only many design choices and data properties that need to 
-be considered, but they are also tightly interconnected, rendering reliable manual pipeline optimization all but impossible! 
+当前模型版本：**`results_v8.9_0702_v2`**（`repo/checkpoint/results_v8.9_0702_v2/`）。
 
-![nnU-Net overview](documentation/assets/nnU-Net_overview.png)
+---
 
-**nnU-Net is a semantic segmentation method that automatically adapts to a given dataset. It will analyze the provided 
-training cases and automatically configure a matching U-Net-based segmentation pipeline. No expertise required on your 
-end! You can simply train the models and use them for your application**.
+## 2. 目录结构
 
-Upon release, nnU-Net was evaluated on 23 datasets belonging to competitions from the biomedical domain. Despite competing 
-with handcrafted solutions for each respective dataset, nnU-Net's fully automated pipeline scored several first places on 
-open leaderboards! Since then nnU-Net has stood the test of time: it continues to be used as a baseline and method 
-development framework ([9 out of 10 challenge winners at MICCAI 2020](https://arxiv.org/abs/2101.00232) and 5 out of 7 
-in MICCAI 2021 built their methods on top of nnU-Net, 
- [we won AMOS2022 with nnU-Net](https://amos22.grand-challenge.org/final-ranking/))!
+```
+repo/
+├── pipeline.sh                        # 【一键】端到端推理：分割 → 分类 → 可视化
+│
+├── train/
+│   ├── segmentation/                  # 分割训练数据准备 (DICOM → npy → nii)
+│   └── classify/
+│       └── dev_0702_v2/               # ★ 分类训练 (当前版本)
+│           ├── run_train.sh           #   一键训练：LASSO 选择 → 跨区域增强 → SVM 级联
+│           ├── 1_get_feature_v8.py    #   Step0: PyRadiomics 特征提取
+│           ├── 1a_lasso_v3.py         #   Step1: LASSO 特征选择 (Stage1+Stage2)
+│           ├── 1b_add_cross_features_v8.py  # Step2: 跨区域/比率/one-hot 特征增强
+│           ├── 2_lasso_v8.py          #   Step3: 二轮 LASSO
+│           ├── 3_train_svm_v8.py      #   Step4: SVM 级联训练 (GroupKFold CV + Platt 校准)
+│           ├── data_train/            #   训练特征 CSV
+│           ├── in_domain_cv_eval.py       # ★ 集内测试: Stage1 OOF 主指标+图
+│           ├── in_domain_stage_eval.py    #   集内: Stage1/Stage2 分阶段指标
+│           ├── in_domain_stage2_auc.py    # ★ 集内: Stage2 Pooled AUC (复用 plot_roc_paper 保证图=表)
+│           ├── plot_roc_paper.py          # ★ 论文 ROC 图 (Stage1 读 OOF; Stage2 pooled)
+│           └── README_集内测试与外部验证.md  # 评估复现详细说明
+│
+├── infer/
+│   ├── segmentation/                  # 分割推理: DICOM → npy → nii → nnU-Net → 3D 重构
+│   │   ├── 1_dcm2npy.py / 2_npy2nii.py / 4_vis.py / 5__nii23D.py
+│   │   └── evaluation/                # 分割评估 (Dice/HD95 等) + 复现文档
+│   │       ├── evaluate.py / metrics.py / utils.py / visualize.py
+│   │       └── REPRODUCE_Table3.md
+│   └── classify/
+│       ├── run_inference.sh           # 【一键】外部验证: 推理 → 过滤 → 报告 + 指标
+│       ├── SVM_RBF_inference_pipeline_v8_v2.py  # 级联推理引擎 (特征+Stage1+Stage2+后处理)
+│       ├── visualize_report_v8.py     # 诊断报告绘图 (含三分类 3-Cls Acc 汇总表)
+│       └── external_stage2_auc.py     # 外部验证 Stage2 AUC
+│
+├── checkpoint/results_v8.9_0702_v2/   # 当前模型 (4 区域 × models/*.pkl)
+└── data/                              # 数据 (image_3d / mask_3d / GT Excel / 结果)
+```
 
-Please cite the [following paper](https://www.google.com/url?q=https://www.nature.com/articles/s41592-020-01008-z&sa=D&source=docs&ust=1677235958581755&usg=AOvVaw3dWL0SrITLhCJUBiNIHCQO) when using nnU-Net:
+---
 
-    Isensee, F., Jaeger, P. F., Kohl, S. A., Petersen, J., & Maier-Hein, K. H. (2021). nnU-Net: a self-configuring 
-    method for deep learning-based biomedical image segmentation. Nature methods, 18(2), 203-211.
+## 3. 环境
 
+| 组件 | 环境 | 用途 |
+|---|---|---|
+| nnU-Net | conda env `knee_yx` | 软骨分割 (Stage 1) |
+| 分类/可视化 | `repo/venv310` (Python 3.10) | 特征提取、SVM 分类、报告 |
 
-## What can nnU-Net do for you?
-If you are a **domain scientist** (biologist, radiologist, ...) looking to analyze your own images, nnU-Net provides 
-an out-of-the-box solution that is all but guaranteed to provide excellent results on your individual dataset. Simply 
-convert your dataset into the nnU-Net format and enjoy the power of AI - no expertise required!
+依赖：SimpleITK、PyRadiomics、scikit-learn、pandas、numpy、matplotlib、pillow、pypinyin。
 
-If you are an **AI researcher** developing segmentation methods, nnU-Net:
-- offers a fantastic out-of-the-box applicable baseline algorithm to compete against
-- can act as a method development framework to test your contribution on a large number of datasets without having to 
-tune individual pipelines (for example evaluating a new loss function)
-- provides a strong starting point for further dataset-specific optimizations. This is particularly used when competing 
-in segmentation challenges
-- provides a new perspective on the design of segmentation methods: maybe you can find better connections between 
-dataset properties and best-fitting segmentation pipelines?
+---
 
-## What is the scope of nnU-Net?
-nnU-Net is built for semantic segmentation. It can handle 2D and 3D images with arbitrary 
-input modalities/channels. It can understand voxel spacings, anisotropies and is robust even when classes are highly
-imbalanced.
+## 4. 快速开始
 
-nnU-Net relies on supervised learning, which means that you need to provide training cases for your application. The number of 
-required training cases varies heavily depending on the complexity of the segmentation problem. No 
-one-fits-all number can be provided here! nnU-Net does not require more training cases than other solutions - maybe 
-even less due to our extensive use of data augmentation. 
+### 4.1 端到端推理（新病例 DICOM → 诊断报告）
 
-nnU-Net expects to be able to process entire images at once during preprocessing and postprocessing, so it cannot 
-handle enormous images. As a reference: we tested images from 40x40x40 pixels all the way up to 1500x1500x1500 in 3D 
-and 40x40 up to ~30000x30000 in 2D! If your RAM allows it, larger is always possible.
+```bash
+cd repo
+bash pipeline.sh
+```
 
-## How does nnU-Net work?
-Given a new dataset, nnU-Net will systematically analyze the provided training cases and create a 'dataset fingerprint'. 
-nnU-Net then creates several U-Net configurations for each dataset: 
-- `2d`: a 2D U-Net (for 2D and 3D datasets)
-- `3d_fullres`: a 3D U-Net that operates on a high image resolution (for 3D datasets only)
-- `3d_lowres` → `3d_cascade_fullres`: a 3D U-Net cascade where first a 3D U-Net operates on low resolution images and 
-then a second high-resolution 3D U-Net refined the predictions of the former (for 3D datasets with large image sizes only)
+一条命令完成：分割 (nnU-Net) → 3D 重构 → 级联分类 → 可视化诊断报告。
+输出：分割结果、每例诊断报告图（分割叠加 + 损伤热力图 + 诊断面板）。
 
-**Note that not all U-Net configurations are created for all datasets. In datasets with small image sizes, the 
-U-Net cascade (and with it the 3d_lowres configuration) is omitted because the patch size of the full 
-resolution U-Net already covers a large part of the input images.**
+### 4.2 分类模型训练（已有特征 CSV）
 
-nnU-Net configures its segmentation pipelines based on a three-step recipe:
-- **Fixed parameters** are not adapted. During development of nnU-Net we identified a robust configuration (that is, certain architecture and training properties) that can 
-simply be used all the time. This includes, for example, nnU-Net's loss function, (most of the) data augmentation strategy and learning rate.
-- **Rule-based parameters** use the dataset fingerprint to adapt certain segmentation pipeline properties by following 
-hard-coded heuristic rules. For example, the network topology (pooling behavior and depth of the network architecture) 
-are adapted to the patch size; the patch size, network topology and batch size are optimized jointly given some GPU 
-memory constraint. 
-- **Empirical parameters** are essentially trial-and-error. For example the selection of the best U-net configuration 
-for the given dataset (2D, 3D full resolution, 3D low resolution, 3D cascade) and the optimization of the postprocessing strategy.
+```bash
+cd repo
+bash train/classify/dev_0702_v2/run_train.sh
+```
 
-## How to get started?
-Read these:
-- [Installation instructions](documentation/installation_instructions.md)
-- [Dataset conversion](documentation/dataset_format.md)
-- [Usage instructions](documentation/how_to_use_nnunet.md)
+从 `data_train/knee_radiomics_features_3d_integrated.csv` 出发，完成 LASSO 选择 → 跨区域增强 →
+SVM 级联训练（GroupKFold 5 折 CV + Platt 概率校准），模型保存至 `checkpoint/results_v8.9_0702_v2/`。
 
-Additional information:
-- [Learning from sparse annotations (scribbles, slices)](documentation/ignore_label.md)
-- [Region-based training](documentation/region_based_training.md)
-- [Manual data splits](documentation/manual_data_splits.md)
-- [Pretraining and finetuning](documentation/pretraining_and_finetuning.md)
-- [Intensity Normalization in nnU-Net](documentation/explanation_normalization.md)
-- [Manually editing nnU-Net configurations](documentation/explanation_plans_files.md)
-- [Extending nnU-Net](documentation/extending_nnunet.md)
-- [What is different in V2?](documentation/changelog.md)
+### 4.3 外部验证（独立测试集）
 
-Competitions:
-- [AutoPET II](documentation/competitions/AutoPETII.md)
+```bash
+cd repo
+bash infer/classify/run_inference.sh
+```
 
-[//]: # (- [Ignore label]&#40;documentation/ignore_label.md&#41;)
+推理 → 按排除名单过滤 → 生成每例报告 + `summary_metrics.png`（ROC + 指标表，含三分类
+3-Cls Acc）+ `confusion_matrices.png` + `summary_metrics.csv`。
 
-## Where does nnU-Net perform well and where does it not perform?
-nnU-Net excels in segmentation problems that need to be solved by training from scratch, 
-for example: research applications that feature non-standard image modalities and input channels,
-challenge datasets from the biomedical domain, majority of 3D segmentation problems, etc . We have yet to find a 
-dataset for which nnU-Net's working principle fails!
+### 4.4 集内评估（交叉验证 OOF）
 
-Note: On standard segmentation 
-problems, such as 2D RGB images in ADE20k and Cityscapes, fine-tuning a foundation model (that was pretrained on a large corpus of 
-similar images, e.g. Imagenet 22k, JFT-300M) will provide better performance than nnU-Net! That is simply because these 
-models allow much better initialization. Foundation models are not supported by nnU-Net as 
-they 1) are not useful for segmentation problems that deviate from the standard setting (see above mentioned 
-datasets), 2) would typically only support 2D architectures and 3) conflict with our core design principle of carefully adapting 
-the network topology for each dataset (if the topology is changed one can no longer transfer pretrained weights!) 
+```bash
+cd repo
+venv310/bin/python train/classify/dev_0702_v2/in_domain_cv_eval.py    # Stage1 主指标 + 图
+venv310/bin/python train/classify/dev_0702_v2/in_domain_stage_eval.py # Stage1/2 分阶段指标
+venv310/bin/python train/classify/dev_0702_v2/in_domain_stage2_auc.py # Stage2 Pooled AUC
+```
 
-## What happened to the old nnU-Net?
-The core of the old nnU-Net was hacked together in a short time period while participating in the Medical Segmentation 
-Decathlon challenge in 2018. Consequently, code structure and quality were not the best. Many features 
-were added later on and didn't quite fit into the nnU-Net design principles. Overall quite messy, really. And annoying to work with.
+说明：训练集全部用于训练（无独立留出集），集内评估采用 **GroupKFold 五折交叉验证的
+out-of-fold (OOF) 预测**，患者级不泄漏。
 
-nnU-Net V2 is a complete overhaul. The "delete everything and start again" kind. So everything is better 
-(in the author's opinion haha). While the segmentation performance [remains the same](https://docs.google.com/spreadsheets/d/13gqjIKEMPFPyMMMwA1EML57IyoBjfC3-QCTn4zRN_Mg/edit?usp=sharing), a lot of cool stuff has been added. 
-It is now also much easier to use it as a development framework and to manually fine-tune its configuration to new 
-datasets. A big driver for the reimplementation was also the emergence of [Helmholtz Imaging](http://helmholtz-imaging.de), 
-prompting us to extend nnU-Net to more image formats and domains. Take a look [here](documentation/changelog.md) for some highlights.
+### 4.5 论文 ROC 图
 
-# Acknowledgements
-<img src="documentation/assets/HI_Logo.png" height="100px" />
+```bash
+cd repo
+venv310/bin/python train/classify/dev_0702_v2/plot_roc_paper.py
+```
 
-<img src="documentation/assets/dkfz_logo.png" height="100px" />
+Stage 1 直接读取 OOF CSV（图中 AUC 与集内指标表严格一致）；
+Stage 2 输出 pooled ROC（AUC=0.873，与表格一致）。
+输出：`checkpoint/results_v8.9_0702_v2_paper_figures/`。
 
-nnU-Net is developed and maintained by the Applied Computer Vision Lab (ACVL) of [Helmholtz Imaging](http://helmholtz-imaging.de) 
-and the [Division of Medical Image Computing](https://www.dkfz.de/en/mic/index.php) at the 
-[German Cancer Research Center (DKFZ)](https://www.dkfz.de/en/index.html).
+---
+
+## 5. 主要结果
+
+**集内交叉验证（GroupKFold 5 折 OOF, n=117/区域）**
+
+| 阶段 | 区域 | AUC | Acc | Sens | Spec |
+|---|---|---|---|---|---|
+| Stage 1 | FM | 0.899 | 0.846 | 0.786 | 0.880 |
+| | FL | 0.938 | 0.897 | 0.462 | 0.952 |
+| | TM | 0.945 | 0.915 | 0.714 | 0.958 |
+| | TL | 0.892 | 0.897 | 0.619 | 0.958 |
+| Stage 2 (Pooled) | 全区域 | 0.873 | 0.887 | 0.774 | 0.939 |
+
+**端到端外部验证（DICOM → 分割 → 分类 → 可视化, n=20/区域）**
+
+| 阶段 | 区域 | AUC | Acc | 3-Cls Acc |
+|---|---|---|---|---|
+| Stage 1 | FM | 0.905 | 0.900 | 0.900 |
+| | FL | 0.976 | 0.900 | 0.900 |
+| | TM | 0.950 | 0.900 | 0.900 |
+| | TL | 1.000 | 0.950 | 0.900 |
+
+> 详细的评估协议、口径说明与逐步复现命令，见
+> `repo/train/classify/dev_0702_v2/README_集内测试与外部验证.md`。
+
+---
+
+## 6. 备注
+
+- 分割模型基于 [nnU-Net](https://github.com/MIC-DKFZ/nnUNet)（官方文档见
+  `documentation/`），如需引用请同时引用 nnU-Net 原论文。
+- 分类/评估/可视化代码位于 `repo/` 下，使用本流程请遵循仓库 LICENSE。
+- 评估中 Stage 1 与 Stage 2 的图、表、脚本均保持同一统计口径（OOF / pooled），保证可复现与自洽。
+
